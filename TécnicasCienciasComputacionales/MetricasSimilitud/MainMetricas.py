@@ -8,7 +8,7 @@ def hamming(vector1, vector2):
 
 
 import pandas as pd
-instancia = pd.read_csv("InstanciaTennis.csv")
+instancia = pd.read_csv("InstanciasTennis.csv")
 
 #print(instancia)
 #comparacion del registro 1 con todos los demas registros

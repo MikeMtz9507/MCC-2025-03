@@ -1,5 +1,6 @@
 
-import Metricas as m
+import Metricas as mm
+from Metricas import getDistancia
 
 vectorA = [2, 10, 20, 25, 64]
 vectorB = [3, 8,20, 25, 56]
