@@ -1,112 +1,137 @@
 import csv
 import statistics
 from datetime import datetime, timedelta
-from scipy.stats import pearsonr
 
 matriz = []
 
-# --- LECTURA DEL CSV ---
+# --- Lectura del CSV (Mes, Hora, TempExt, TempInt, TempClima) ---
 with open("explicación.csv", newline='', encoding='utf-8') as f:
     lector = csv.reader(f)
-    next(lector)  # saltar encabezado si lo tiene
+    next(lector)
     for row in lector:
         try:
             mes = row[0]
             hora = datetime.strptime(row[1], "%H:%M")
+
             temp_ext = float(row[2])
             temp_int = float(row[3])
             temp_clima = float(row[4])
 
-            if mes in ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio"]:
-                matriz.append({
-                    "Mes": mes,
-                    "Hora": hora,
-                    "temp_exterior": temp_ext,
-                    "temp_interior": temp_int,
-                    "temp_clima": temp_clima
-                })
+            matriz.append({
+                "mes": mes,
+                "hora": hora,
+                "temp_exterior": temp_ext,
+                "temp_interior": temp_int,
+                "temp_clima": temp_clima
+            })
+
         except Exception as e:
-            print(f"Error al procesar fila: {row} ({e})")
+            print(f"Error en fila {row} ({e})")
             continue
 
 
-# --- AGRUPAR Y CALCULAR POR DÍA (SUPONIENDO 1440 MINUTOS = 1 DÍA) ---
-def calcular_estadisticas_diarias(matriz, intervalo_min=15):
-    if not matriz:
-        return []
+# --- Correlación manual ---
+def correlacion_manual(x, y):
+    if len(x) < 2 or len(y) < 2:
+        return None
+    media_x = statistics.mean(x)
+    media_y = statistics.mean(y)
+    num = sum((xi - media_x)*(yi - media_y) for xi, yi in zip(x,y))
+    den = (sum((xi - media_x)**2 for xi in x) * sum((yi - media_y)**2 for yi in y))**0.5
+    return None if den == 0 else round(num/den, 3)
 
+
+# --- Detectar días automáticos (sin columna Día) ---
+def separar_por_dias(datos):
+    dias = []
+    dia_actual = []
+    hora_anterior = datos[0]["hora"]
+
+    for fila in datos:
+        if fila["hora"] < hora_anterior:  # cambio de día
+            dias.append(dia_actual)
+            dia_actual = []
+        dia_actual.append(fila)
+        hora_anterior = fila["hora"]
+
+    if dia_actual:
+        dias.append(dia_actual)
+
+    return dias
+
+
+# --- Estadísticas cada 15 minutos por día ---
+def calcular_estadisticas(matriz):
     resultados = []
-    meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio"]
+    meses = sorted(set(f["mes"] for f in matriz))
 
     for mes in meses:
-        datos_mes = [fila for fila in matriz if fila["Mes"] == mes]
-        if not datos_mes:
-            continue
+        datos_mes = sorted(
+            [f for f in matriz if f["mes"] == mes],
+            key=lambda x: x["hora"]
+        )
 
-        datos_mes = sorted(datos_mes, key=lambda x: x["Hora"])
-        inicio = datos_mes[0]["Hora"]
-        fin = inicio + timedelta(minutes=intervalo_min)
-        grupos = []
+        dias = separar_por_dias(datos_mes)
 
-        for fila in datos_mes:
-            if fila["Hora"] < fin:
-                grupos.append(fila)
-            else:
-                if grupos:
-                    ext = [g["temp_exterior"] for g in grupos]
-                    inte = [g["temp_interior"] for g in grupos]
-                    clima = [g["temp_clima"] for g in grupos]
+        for num_dia, datos_dia in enumerate(dias, start=1):
+
+            # Filtrar horario 7:00–20:00
+            datos_dia = [
+                f for f in datos_dia
+                if 7 <= f["hora"].hour < 20
+            ]
+
+            inicio = datetime(2025,1,1,7,0)
+            fin = inicio + timedelta(minutes=30)
+
+            while inicio.hour < 20:
+                grupo = [
+                    f for f in datos_dia
+                    if inicio.time() <= f["hora"].time() < fin.time()
+                ]
+
+                if grupo:
+                    ext = [g["temp_exterior"] for g in grupo]
+                    inte = [g["temp_interior"] for g in grupo]
+                    clima = [g["temp_clima"] for g in grupo]
 
                     resultados.append({
                         "Mes": mes,
+                        "Dia": num_dia,
                         "Inicio": inicio.strftime("%H:%M"),
-                        "Promedio Exterior": statistics.mean(ext),
-                        "Promedio Interior": statistics.mean(inte),
-                        "Promedio Clima": statistics.mean(clima),
-                        "Mediana Exterior": statistics.median(ext),
-                        "Mediana Interior": statistics.median(inte),
-                        "Mediana Clima": statistics.median(clima),
-                        "Corr(Ext-Int)": round(pearsonr(ext, inte)[0], 3) if len(ext) > 1 else None,
-                        "Corr(Ext-Clima)": round(pearsonr(ext, clima)[0], 3) if len(ext) > 1 else None,
-                        "Corr(Int-Clima)": round(pearsonr(inte, clima)[0], 3) if len(inte) > 1 else None
+                        "Fin": fin.strftime("%H:%M"),
+                        "Promedio_exterior": statistics.mean(ext),
+                        "Promedio_interior": statistics.mean(inte),
+                        "Promedio_clima": statistics.mean(clima),
+                        "Corr(Ext-Clima)": correlacion_manual(ext, clima),
+                        "Corr(Int-Clima)": correlacion_manual(inte, clima)
                     })
-                # Reiniciar el grupo
-                inicio = fila["Hora"]
-                fin = inicio + timedelta(minutes=intervalo_min)
-                grupos = [fila]
 
-        # Agregar el último grupo
-        if grupos:
-            ext = [g["temp_exterior"] for g in grupos]
-            inte = [g["temp_interior"] for g in grupos]
-            clima = [g["temp_clima"] for g in grupos]
-
-            resultados.append({
-                "Mes": mes,
-                "Inicio": inicio.strftime("%H:%M"),
-                "Promedio Exterior": statistics.mean(ext),
-                "Promedio Interior": statistics.mean(inte),
-                "Promedio Clima": statistics.mean(clima),
-                "Mediana Exterior": statistics.median(ext),
-                "Mediana Interior": statistics.median(inte),
-                "Mediana Clima": statistics.median(clima),
-                "Corr(Ext-Int)": round(pearsonr(ext, inte)[0], 3) if len(ext) > 1 else None,
-                "Corr(Ext-Clima)": round(pearsonr(ext, clima)[0], 3) if len(ext) > 1 else None,
-                "Corr(Int-Clima)": round(pearsonr(inte, clima)[0], 3) if len(inte) > 1 else None
-            })
+                inicio = fin
+                fin = inicio + timedelta(minutes=30)
 
     return resultados
 
 
-# --- EJECUCIÓN ---
-#resultados_dia = calcular_estadisticas_diarias(matriz, 1440)
-resultados_dia = calcular_estadisticas_diarias(matriz, 15 and 30 and 45)
-# --- IMPRESIÓN ---
-print("\nPromedios, medianas y correlaciones por día de cada mes (Enero-Junio):\n")
-for r in resultados_dia:
-    print(
-        f"{r['Mes']} (inicio {r['Inicio']}) → "
-        f"Prom(ext/int/ac): {r['Promedio Exterior']:.2f}, {r['Promedio Interior']:.2f}, {r['Promedio Clima']:.2f} | "
-        f"Med(ext/int/ac): {r['Mediana Exterior']:.2f}, {r['Mediana Interior']:.2f}, {r['Mediana Clima']:.2f} | "
-        f"Corr: Ext-Int={r['Corr(Ext-Int)']}, Ext-Clima={r['Corr(Ext-Clima)']}, Int-Clima={r['Corr(Int-Clima)']}"
-    )
+# --- Ejecutar ---
+resultados_15min = calcular_estadisticas(matriz)
+
+
+print("\nPrimeros resultados:\n")
+for r in resultados_15min:
+    print(r)
+
+
+# --- Guardar CSV ---
+nombre_salida = "resultados_eda_dia_30min.csv"
+with open(nombre_salida, "w", newline="", encoding="utf-8") as f:
+    campos = [
+        "Mes","Dia","Inicio","Fin",
+        "Promedio_exterior","Promedio_interior","Promedio_clima",
+        "Corr(Ext-Clima)","Corr(Int-Clima)"
+    ]
+    w = csv.DictWriter(f, fieldnames=campos)
+    w.writeheader()
+    w.writerows(resultados_15min)
+
+print(f"\nResultados guardados en '{nombre_salida}'.")
